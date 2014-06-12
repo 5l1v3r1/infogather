@@ -1,15 +1,37 @@
 __author__ = 'panos'
-from socks import setdefaultproxy, PROXY_TYPE_SOCKS4, socksocket
-import socket
-from os.path import basename
-from urllib import urlencode
-from urllib2 import Request, urlopen
-from json import loads
 from sys import exit, argv
 from termcolor import colored
+from socket import gethostbyname, gaierror, socket, error
+from os.path import basename
+from urllib import urlencode
+from httplib2 import ProxyInfo, Http, HttpLib2Error
+from httplib2.socks import PROXY_TYPE_SOCKS4
+from json import loads
+from time import sleep
+notes = 1
+
+def out(message,level):
+	if notes == 0 and level == 2:
+		return
+	if level == 1:
+		prefix = '[-] Fatal: '
+		collor = 'red'
+	elif level == 2:
+		prefix = '[*] Note: '
+		collor = 'yellow'
+	elif level == 3:
+		prefix = '[+] OK: '
+		collor = 'green'
+	else:
+		raise ValueError
+	if len(message) == 0:
+		raise ValueError
+	print colored(prefix+message,collor)
+	if level == 1:
+		exit()
 if __name__ != "__main__":
-	print colored('[-] Fatal use this as a standalone script.','red')
-	exit()
+	out('use this as a standalone script.',1)
+
 if 	len(argv) < 2:
 	print colored('''
 ....       :MM ..  M...  MM:............
@@ -40,57 +62,115 @@ M ...M......M.M....... .Z M ..  .M    M
 	print '''
 Shared domains enumerator script:
 
-Usage: python '''+basename(argv[0])+''' domain tor_flag (set 1 for tor use)
+Usage: python '''+basename(argv[0])+''' domain tor_flag (set 1 for tor use )
 '''
 	exit()
-if int(argv[2]) == 1:
-	setdefaultproxy(PROXY_TYPE_SOCKS4, '127.0.0.1', 9050, True)
-	socket.socket = socksocket
+def change_ip():
+	if argv[2] is '1':
+		try:
+			sock = socket()
+			sock.connect(('127.0.0.1',9051))
+			sock.send("AUTHENTICATE\r\n")
+			if 'OK' in sock.recv(10):
+				sock.send("SIGNAL NEWNYM\r\n")
+				if 'OK' in sock.recv(10):
+					sock.close()
+					return True
+		except error:
+			return False
+	else:
+		return False
+def get_data(domain):
+	global tor
+	if tor is True:
+		opener = Http(proxy_info = ProxyInfo(PROXY_TYPE_SOCKS4, '127.0.0.1', 9050, True))
+	else:
+		opener = Http()
+	data = urlencode({'key':'', 'remoteAddress':domain})
+	code, content = opener.request('http://domains.yougetsignal.com/domains.php', 'POST', data, {'User-Agent': 'Mozilla/5.0 (Windows NT 6.1; WOW64; rv:29.0) Gecko/20100101 Firefox/29.0',
+                                                                                             'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8'})
+	del opener
+	return code, content
+try:
+	argv[2]
+except IndexError:
+	argv.append(None)
+
+if  argv[2] is '1':
+	tor = True
+	try:
+		code, returndata = Http(proxy_info = ProxyInfo(PROXY_TYPE_SOCKS4, '127.0.0.1', 9050, True)).request('https://check.torproject.org/api/ip')
+		if code.status == 200:
+			tor_data = loads(returndata)
+			if tor_data['IsTor'] is False:
+				out('we are not using tor exiting...',1)
+		else:
+			raise HttpLib2Error
+	except HttpLib2Error:
+		out('error in tor check routine exiting...',1)
+else:
+	tor = False
+
+
+
 domain = str(argv[1])
 try:
-	ip = socket.gethostbyname(domain)
-except socket.gaierror:
-	print colored('[-] Fatal the main domain ip address cannot be resolved exiting...','red')
-	exit()
-print colored('[+] Given domain ip obtained: '+str(ip),'green')
-url = 'http://domains.yougetsignal.com/domains.php'
-data = urlencode({'remoteAddress': domain,
-                  'key&': '',
-                  '_=': ''})
-headers = {
-	'User-Agent': 'Mozilla/5.0 (Windows NT 5.1; rv:31.0) Gecko/20100101 Firefox/31.0'}
-request = Request(url, data, headers)
-content = urlopen(request)
-if content.getcode() == 200:
-	correlated = loads(content.read())
-	if 'Success' in correlated['status']:
-		for x in correlated['domainArray']:
-			try:
-				domainip = socket.gethostbyname(x[0])
-			except socket.gaierror:
-				fail = True
-				pass
-			if 'fail' in locals() and 'www.' not in x[0]:
+	ip = gethostbyname(domain)
+except gaierror:
+	out('main domain ip address cannot be resolved exiting...',1)
+
+out('given domain ip obtained: '+str(ip),3)
+cond = True
+while cond:
+	code, content = get_data(domain)
+	if code.status != 200:
+		out('wrong status code returned probably cloudflare is blocking our requests...',2)
+		if change_ip() is True:
+			out('we changed ip retrying...',2)
+			sleep(2)
+		else:
+			out('ip change failed exiting...',1)
+
+	if code.status == 200:
+		correlated = loads(content)
+		if 'fail' in correlated['status'].lower():
+			if 'daily reverse' in correlated['message'].lower():
+				if change_ip() is False:
+					out('daily limit reached try change your ip address or use tor instead...',1)
+				else:
+					out('daily limit reached we changed ip retrying...',2)
+					sleep(2)
+			else:
+				out('unknown fail message: '+correlated['message'],1)
+
+		if 'success' in correlated['status'].lower():
+			cond = False
+			for x in correlated['domainArray']:
 				try:
-					domainip = socket.gethostbyname('www.'+x[0])
-					prefix = True
-					del fail
-				except socket.gaierror:
-					print colored('[-] Error domain '+x[0]+' cannot be resolved.', 'red')
+					domainip = gethostbyname(x[0])
+				except gaierror:
+					fail = True
+					pass
+				if 'fail' in locals() and 'www.' not in x[0]:
+					try:
+						domainip = gethostbyname('www.'+x[0])
+						prefix = True
+						del fail
+					except gaierror:
+						out('domain '+x[0]+' cannot be resolved.', 2)
+						del fail
+						continue
+				elif 'fail' in locals() and 'www.' in x[0]:
+					out('domain '+x[0]+' cannot be resolved.', 2)
 					del fail
 					continue
-			elif 'fail' in locals() and 'www.' in x[0]:
-				print colored('[-] Error domain '+x[0]+' cannot be resolved.', 'red')
-				del fail
-				continue
-			if domainip in ip:
-				if 'prefix' in locals():
-					print colored('[+] Domain www.' + x[0] + ' found.', 'green')
-					del domainip
-					del prefix
+				if domainip in ip:
+					if 'prefix' in locals():
+						out('domain www.' + x[0] + ' found.', 3)
+						del domainip
+						del prefix
+					else:
+						out('domain ' + x[0] + ' found.', 3)
+						del domainip
 				else:
-					print colored('[+] Domain ' + x[0] + ' found.', 'green')
-					del domainip
-	elif 'Daily reverse' in correlated['message']:
-		print colored('[-] Daily limit reached try change your ip address or use tor instead...','red')
-		exit()
+					out('domain '+x[0]+' not bound to target ip.',2)
