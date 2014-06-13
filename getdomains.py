@@ -8,6 +8,7 @@ from httplib2 import ProxyInfo, Http, HttpLib2Error
 from httplib2.socks import PROXY_TYPE_SOCKS4
 from json import loads
 from time import sleep
+from re import compile, IGNORECASE
 notes = 1
 
 def out(message,level):
@@ -91,6 +92,35 @@ def get_data(domain):
                                                                                              'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8'})
 	del opener
 	return code, content
+def resolve_host(host):
+	if argv[2] is '1':
+		try:
+			sock = socket()
+			sock.connect(('127.0.0.1',9051))
+			sock.send("AUTHENTICATE\r\n")
+			if 'OK' in sock.recv(10):
+				sock.send("SETEVENTS ADDRMAP\r\n")
+				if 'OK' in sock.recv(10):
+					sock.send("RESOLVE %s\r\n" % host)
+					while True:
+						back = sock.recv(1024)
+						if 'ADDRMAP '+host in back:
+							if host+' <error>' in back:
+								raise gaierror
+							reobj = compile(r"ADDRMAP ([^\s]+) ([0-9]{1,3}.[0-9]{1,3}.[0-9]{1,3}.[0-9]{1,3})", IGNORECASE)
+							result = reobj.findall(back)
+							if str(result[0][0]) == str(host):
+								sock.close()
+								return result[0][1]
+		except gaierror:
+			raise
+		except error:
+			return False
+	else:
+		try:
+			return gethostbyname(host)
+		except gaierror:
+			return None
 try:
 	argv[2]
 except IndexError:
@@ -104,6 +134,8 @@ if  argv[2] is '1':
 			tor_data = loads(returndata)
 			if tor_data['IsTor'] is False:
 				out('we are not using tor exiting...',1)
+			else:
+				out('tor check successful...',3)
 		else:
 			raise HttpLib2Error
 	except HttpLib2Error:
@@ -111,11 +143,9 @@ if  argv[2] is '1':
 else:
 	tor = False
 
-
-
 domain = str(argv[1])
 try:
-	ip = gethostbyname(domain)
+	ip = resolve_host(domain)
 except gaierror:
 	out('main domain ip address cannot be resolved exiting...',1)
 
@@ -147,13 +177,13 @@ while cond:
 			cond = False
 			for x in correlated['domainArray']:
 				try:
-					domainip = gethostbyname(x[0])
+					domainip = resolve_host(x[0])
 				except gaierror:
 					fail = True
 					pass
 				if 'fail' in locals() and 'www.' not in x[0]:
 					try:
-						domainip = gethostbyname('www.'+x[0])
+						domainip = resolve_host('www.'+x[0])
 						prefix = True
 						del fail
 					except gaierror:
