@@ -3,12 +3,14 @@ from sys import exit, argv
 from termcolor import colored
 from socket import gethostbyname, gaierror, socket, error
 from os.path import basename, isfile
+from os import remove
+from os import error as os_error
 from urllib import urlencode
 from httplib2 import ProxyInfo, Http, HttpLib2Error
 from httplib2.socks import PROXY_TYPE_SOCKS4
 from json import loads
 from time import sleep
-from re import compile, IGNORECASE
+from re import compile, IGNORECASE,VERBOSE, search
 domain_counter = 0
 # user defined variables
 debug = 1
@@ -154,12 +156,24 @@ def resolve_host(host):
 		return gethostbyname(host)
 
 for index, data in enumerate(argv):
-	test = len(argv)
-	test2 = index+1
+	if not search(r"\b([a-z0-9]+(-[a-z0-9]+)*\.)+[a-z]{2,}\b", argv[1], IGNORECASE | VERBOSE):
+		out('wrong syntax or domain used exiting...',1)
 	if data == '-f' and len(argv) > index:
 		if isfile(argv[index+1]):
-			print colored('[-] Fatal: given output file exists exiting...','red')
-			exit()
+			try:
+				for i in range(0,10):
+					print colored('[-] Given output file exists you have '+str(int(10)-i)+' seconds. press delete or Ctrl-C to bypass...','red')+'\r',
+					sleep(1)
+				out('time out exiting...',1)
+			except KeyboardInterrupt:
+				print colored('[+] Bypass detected continuing...','green')
+				print colored('[+] Removing old file...','green')
+				try:
+					remove(argv[index+1])
+					print colored('[+] File removed continuing...','green')
+				except os_error:
+					out('file not deleted exiting...',1)
+				outfile = argv[index+1]
 		else:
 			outfile = argv[index+1]
 	if data == '-tor':
@@ -217,7 +231,7 @@ while cond:
 			else:
 				out('unknown fail message: '+correlated['message'],1)
 
-		if 'success' in correlated['status'].lower() and len(correlated['domainArray']) >= 1:
+		elif 'success' in correlated['status'].lower() and len(correlated['domainArray']) >= 1:
 			cond = False
 			for x in correlated['domainArray']:
 				try:
@@ -265,7 +279,7 @@ while cond:
 					del domainip
 					out('domain '+x[0]+' not bound to target ip.',2)
 		else:
-			out('remote service returned 0 results for the givent domain exiting...',1)
+			out('Unexpected behavior detected from remote system exiting...',1)
 out(str(domain_counter),5)
 if 'sock' in globals():
 	sock.send("QUIT\r\n")
