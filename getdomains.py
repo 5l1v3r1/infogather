@@ -9,11 +9,15 @@ from httplib2.socks import PROXY_TYPE_SOCKS4
 from json import loads
 from time import sleep
 from re import compile, IGNORECASE
+# user defined variables
 notes = 1
+tor_host = '127.0.0.1'
+tor_port = 9050
+tor_control_port = 9051
 
 def out(message,level):
 	if notes == 0 and level == 2:
-		return
+		return True
 	if level == 1:
 		prefix = '[-] Fatal: '
 		collor = 'red'
@@ -23,6 +27,9 @@ def out(message,level):
 	elif level == 3:
 		prefix = '[+] OK: '
 		collor = 'green'
+	elif level == 4:
+		prefix = '[x] Info: '
+		collor = 'magenta'
 	else:
 		raise ValueError
 	if len(message) == 0:
@@ -66,25 +73,33 @@ Shared domains enumerator script:
 Usage: python '''+basename(argv[0])+''' domain tor_flag (set 1 for tor use )
 '''
 	exit()
+def control_init():
+	global sock
+	sock = socket()
+	sock.connect((tor_host,tor_control_port))
+	sock.send("AUTHENTICATE\r\n")
+	if 'OK' in sock.recv(10):
+		return True
+	else:
+		raise Exception
+
 def change_ip():
-	if argv[2] is '1':
+	global tor, tor_control_port, tor_host, sock
+	if tor is True:
+		if 'sock' not in globals():
+			control_init()
 		try:
-			sock = socket()
-			sock.connect(('127.0.0.1',9051))
-			sock.send("AUTHENTICATE\r\n")
+			sock.send("SIGNAL NEWNYM\r\n")
 			if 'OK' in sock.recv(10):
-				sock.send("SIGNAL NEWNYM\r\n")
-				if 'OK' in sock.recv(10):
-					sock.close()
-					return True
+				return True
 		except error:
 			return False
 	else:
 		return False
 def get_data(domain):
-	global tor
+	global tor, tor_port, tor_host
 	if tor is True:
-		opener = Http(proxy_info = ProxyInfo(PROXY_TYPE_SOCKS4, '127.0.0.1', 9050, True))
+		opener = Http(proxy_info = ProxyInfo(PROXY_TYPE_SOCKS4, tor_host, tor_port, True))
 	else:
 		opener = Http()
 	data = urlencode({'key':'', 'remoteAddress':domain})
@@ -93,34 +108,35 @@ def get_data(domain):
 	del opener
 	return code, content
 def resolve_host(host):
-	if argv[2] is '1':
+	global tor, tor_host, tor_control_port, sock
+	if tor is True:
+		if 'sock' not in globals():
+			control_init()
 		try:
-			sock = socket()
-			sock.connect(('127.0.0.1',9051))
-			sock.send("AUTHENTICATE\r\n")
+			sock.send("SETEVENTS ADDRMAP\r\n")
 			if 'OK' in sock.recv(10):
-				sock.send("SETEVENTS ADDRMAP\r\n")
-				if 'OK' in sock.recv(10):
-					sock.send("RESOLVE %s\r\n" % host)
-					while True:
-						back = sock.recv(1024)
-						if 'ADDRMAP '+host in back:
-							if host+' <error>' in back:
-								raise gaierror
-							reobj = compile(r"ADDRMAP ([^\s]+) ([0-9]{1,3}.[0-9]{1,3}.[0-9]{1,3}.[0-9]{1,3})", IGNORECASE)
-							result = reobj.findall(back)
-							if str(result[0][0]) == str(host):
-								sock.close()
-								return result[0][1]
+				sock.send("RESOLVE %s\r\n" % host)
+				while True:
+					back = sock.recv(1024)
+					if 'ADDRMAP '+host in back:
+						if host+' <error>' in back:
+							sock.send("SETEVENTS\r\n")
+							if 'OK' not in sock.recv(1024):
+								raise Exception
+							raise gaierror
+						reobj = compile(r"ADDRMAP ([^\s]+) ([0-9]{1,3}.[0-9]{1,3}.[0-9]{1,3}.[0-9]{1,3})", IGNORECASE)
+						result = reobj.findall(back)
+						if str(result[0][0]) == str(host):
+							sock.send("SETEVENTS\r\n")
+							if 'OK' not in sock.recv(1024):
+								raise Exception
+							return result[0][1]
 		except gaierror:
 			raise
 		except error:
-			return False
+			raise
 	else:
-		try:
-			return gethostbyname(host)
-		except gaierror:
-			return None
+		return gethostbyname(host)
 try:
 	argv[2]
 except IndexError:
@@ -129,7 +145,7 @@ except IndexError:
 if  argv[2] is '1':
 	tor = True
 	try:
-		code, returndata = Http(proxy_info = ProxyInfo(PROXY_TYPE_SOCKS4, '127.0.0.1', 9050, True)).request('https://check.torproject.org/api/ip')
+		code, returndata = Http(proxy_info = ProxyInfo(PROXY_TYPE_SOCKS4, tor_host, tor_port, True)).request('https://check.torproject.org/api/ip')
 		if code.status == 200:
 			tor_data = loads(returndata)
 			if tor_data['IsTor'] is False:
@@ -173,7 +189,7 @@ while cond:
 			else:
 				out('unknown fail message: '+correlated['message'],1)
 
-		if 'success' in correlated['status'].lower():
+		if 'success' in correlated['status'].lower() and len(correlated['domainArray']) >= 1:
 			cond = False
 			for x in correlated['domainArray']:
 				try:
@@ -187,11 +203,11 @@ while cond:
 						prefix = True
 						del fail
 					except gaierror:
-						out('domain '+x[0]+' cannot be resolved.', 2)
+						out('domain '+x[0]+' cannot be resolved.', 4)
 						del fail
 						continue
 				elif 'fail' in locals() and 'www.' in x[0]:
-					out('domain '+x[0]+' cannot be resolved.', 2)
+					out('domain '+x[0]+' cannot be resolved.', 4)
 					del fail
 					continue
 				if domainip in ip:
@@ -202,5 +218,26 @@ while cond:
 					else:
 						out('domain ' + x[0] + ' found.', 3)
 						del domainip
+				elif domainip not in ip and 'www.' not in x[0]:
+					out('www prefix for '+x[0]+' missing retrying...',2)
+					try:
+						domainip = resolve_host('www.'+x[0])
+					except gaierror:
+						del domainip
+						out('domain '+x[0]+' with prefix cannot be resolved.',4)
+						out('domain '+x[0]+' with/without prefix not bound to target ip.',2)
+						continue
+					if domainip in ip:
+						out('domain www.' + x[0] + ' found.', 3)
+						del domainip
+					else:
+						del domainip
+						out('domain '+x[0]+' with/without prefix not bound to target ip.',2)
 				else:
+					del domainip
 					out('domain '+x[0]+' not bound to target ip.',2)
+		else:
+			out('remote service returned 0 results for the givent domain exiting...',1)
+if 'sock' in globals():
+	sock.send("QUIT\r\n")
+	sock.close()
