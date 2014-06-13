@@ -2,22 +2,22 @@ __author__ = 'panos'
 from sys import exit, argv
 from termcolor import colored
 from socket import gethostbyname, gaierror, socket, error
-from os.path import basename
+from os.path import basename, isfile
 from urllib import urlencode
 from httplib2 import ProxyInfo, Http, HttpLib2Error
 from httplib2.socks import PROXY_TYPE_SOCKS4
 from json import loads
 from time import sleep
 from re import compile, IGNORECASE
+domain_counter = 0
 # user defined variables
-notes = 1
+debug = 1
 tor_host = '127.0.0.1'
 tor_port = 9050
 tor_control_port = 9051
 
 def out(message,level):
-	if notes == 0 and level == 2:
-		return True
+	global debug, domain_counter
 	if level == 1:
 		prefix = '[-] Fatal: '
 		collor = 'red'
@@ -30,13 +30,26 @@ def out(message,level):
 	elif level == 4:
 		prefix = '[x] Info: '
 		collor = 'magenta'
+	elif level == 5:
+		prefix = '[+] Total domain count: '
+		collor = 'green'
 	else:
 		raise ValueError
 	if len(message) == 0:
 		raise ValueError
+	if level == 3 and 'found.' in message:
+		domain_counter += 1
+	if debug == 0 and (level == 2 or level == 4):
+		return True
+	if 'outfile' in globals():
+		global outfile
+		file = open(outfile,'a')
+		file.write(prefix+message+"\n")
+		file.close()
+
 	print colored(prefix+message,collor)
 	if level == 1:
-		exit()
+		exit(1)
 if __name__ != "__main__":
 	out('use this as a standalone script.',1)
 
@@ -70,7 +83,9 @@ M ...M......M.M....... .Z M ..  .M    M
 	print '''
 Shared domains enumerator script:
 
-Usage: python '''+basename(argv[0])+''' domain tor_flag (set 1 for tor use )
+Usage: python '''+basename(argv[0])+''' domain [-tor, -f out.txt]
+	-tor: enable tor support you need to enable the control service to work.
+	-f:   output to file (must not exist)
 '''
 	exit()
 def control_init():
@@ -137,13 +152,22 @@ def resolve_host(host):
 			raise
 	else:
 		return gethostbyname(host)
-try:
-	argv[2]
-except IndexError:
-	argv.append(None)
 
-if  argv[2] is '1':
-	tor = True
+for index, data in enumerate(argv):
+	test = len(argv)
+	test2 = index+1
+	if data == '-f' and len(argv) > index:
+		if isfile(argv[index+1]):
+			print colored('[-] Fatal: given output file exists exiting...','red')
+			exit()
+		else:
+			outfile = argv[index+1]
+	if data == '-tor':
+		tor = True
+	elif data != '-tor' and 'tor' not in locals():
+		tor = False
+
+if  tor is True:
 	try:
 		code, returndata = Http(proxy_info = ProxyInfo(PROXY_TYPE_SOCKS4, tor_host, tor_port, True)).request('https://check.torproject.org/api/ip')
 		if code.status == 200:
@@ -156,8 +180,6 @@ if  argv[2] is '1':
 			raise HttpLib2Error
 	except HttpLib2Error:
 		out('error in tor check routine exiting...',1)
-else:
-	tor = False
 
 domain = str(argv[1])
 try:
@@ -185,6 +207,12 @@ while cond:
 					out('daily limit reached try change your ip address or use tor instead...',1)
 				else:
 					out('daily limit reached we changed ip retrying...',2)
+					sleep(2)
+			elif 'heavy load' in correlated['message'].lower():
+				if change_ip() is False:
+					out('maybe there on to us try change your ip address or use tor instead...',1)
+				else:
+					out('something is wrong maybe there on to us we have changed ip retrying...',2)
 					sleep(2)
 			else:
 				out('unknown fail message: '+correlated['message'],1)
@@ -238,6 +266,7 @@ while cond:
 					out('domain '+x[0]+' not bound to target ip.',2)
 		else:
 			out('remote service returned 0 results for the givent domain exiting...',1)
+out(str(domain_counter),5)
 if 'sock' in globals():
 	sock.send("QUIT\r\n")
 	sock.close()
