@@ -1,9 +1,9 @@
 __author__ = 'panos'
-from sys import exit, argv
+from sys import exit, argv, stdout
 from termcolor import colored
 from socket import gethostbyname, gaierror, socket, error
 from os.path import basename, isfile
-from os import remove
+from os import remove, system, name
 from os import error as os_error
 from urllib import urlencode
 from httplib2 import ProxyInfo, Http, HttpLib2Error
@@ -46,7 +46,7 @@ def out(message,level):
 	if 'outfile' in globals():
 		global outfile
 		file = open(outfile,'a')
-		file.write(prefix+message+"\n")
+		file.write(colored(prefix+message+"\n",collor))
 		file.close()
 
 	print colored(prefix+message,collor)
@@ -87,7 +87,7 @@ Shared domains enumerator script:
 
 Usage: python '''+basename(argv[0])+''' domain [-tor, -f out.txt]
 	-tor: enable tor support you need to enable the control service to work.
-	-f:   output to file (must not exist)
+	-f:   output to file (if exist warning will be displayed)
 '''
 	exit()
 def control_init():
@@ -156,17 +156,22 @@ def resolve_host(host):
 		return gethostbyname(host)
 
 for index, data in enumerate(argv):
+	system('cls' if name == 'nt' else 'clear')
 	if not search(r"\b([a-z0-9]+(-[a-z0-9]+)*\.)+[a-z]{2,}\b", argv[1], IGNORECASE | VERBOSE):
 		out('wrong syntax or domain used exiting...',1)
-	if data == '-f' and len(argv) > index:
+	if data == '-f' and len(argv) > index+1:
 		if isfile(argv[index+1]):
 			try:
 				for i in range(0,10):
-					print colored('[-] Given output file exists you have '+str(int(10)-i)+' seconds. press delete or Ctrl-C to bypass...','red')+'\r',
+					stdout.write(colored('[-] Given output file exists you have '+str(int(10)-i)+' seconds. press delete or Ctrl-C to bypass...\r','red'))
 					sleep(1)
+					stdout.flush()
 				out('time out exiting...',1)
 			except KeyboardInterrupt:
-				print colored('[+] Bypass detected continuing...','green')
+				print colored("\n"+'[+] Bypass detected...','green')
+				instruction = raw_input(colored('[?] are you sure you want to continue? [y/n]: ','green'))
+				if instruction.lower() != 'y':
+					out('desition taken exiting...',1)
 				print colored('[+] Removing old file...','green')
 				try:
 					remove(argv[index+1])
@@ -176,6 +181,8 @@ for index, data in enumerate(argv):
 				outfile = argv[index+1]
 		else:
 			outfile = argv[index+1]
+	elif data == '-f' and len(argv) <= index+1:
+		out('-f argument require a statement exiting...',1)
 	if data == '-tor':
 		tor = True
 	elif data != '-tor' and 'tor' not in locals():
